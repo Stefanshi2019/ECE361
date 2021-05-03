@@ -1,0 +1,342 @@
+#!/bin/bash
+#
+# Script for testing the TextConferencingLab on ECE361
+# The server should be running on a different terminal before running this script
+# The client executable should be in the same folder as the script
+#
+# Usage:
+# >>> ./testclient user1 password1 user2 password2 user3 password3 server_addr server_port
+#
+# Starts 3 clients and send a sequence of commands to each of them
+# The commands sent to client i are printed under a line "==== client i in ===="
+# The outputs of client i are printed under a line "==== client i out ===="
+#
+
+if [ $# -lt 8 ]; then
+	echo "Missing arguments"
+	echo "Usage: ./`basename $0` usr1 pwd1 usr2 pwd2 usr3 pwd3 srv_ip srv_port" >&2
+	exit 0
+fi
+
+DELAY=1
+if [ $# -eq 9 ]; then DELAY=$9;fi
+
+for i in 1 2 3 ; do
+	mkfifo c${i}_in
+	exec {fds[$i]}<>c${i}_in
+done
+
+start_client(){
+	if [ -z "${pidc[$1]}" ] || ! kill -0 ${pidc[$1]} &>/dev/null; then
+		echo "Starting client $1"
+		stdbuf -o0 ./client < c${1}_in | sed -u "i\==== client $1 out ====" &
+		pidc[$1]=$!
+	else
+		echo "Failed to start client $1, client already running"
+	fi
+}
+
+kill_client(){
+	if [ -z "${pidc[$1]}" ] || ! kill -0 ${pidc[$1]} &>/dev/null; then
+		echo "Failed to kill client $1, no such client running"
+	else
+		echo "Killing client $1"
+		if kill "${pidc[$1]}" &> /dev/null; then
+			echo  "Client $1 is dead"
+			pidc[$1]=
+		else
+			echo "Kill failed"
+		fi
+	fi
+}
+
+while read -u 3 type data; do
+	case "${type:0:1}" in 
+		\# )
+			if [ -z $skip ] || [ "${type:1}" = s ] ; then
+				echo;
+				echo -n "$data" 
+			fi
+			;;
+		\>  )
+			if [ -z $skip ] || [ "${type:1}" = s ] ; then
+#				echo;
+#				echo $data
+				eval "$data"
+			fi
+			;;
+		+  )
+			len=${#data}
+			echo;
+			for ((i=0; i<len+6; ++i));do echo -n "+";done;
+			printf '\n+  %s  +\n' "$data"
+			for ((i=0; i<len+6; ++i));do echo -n "+";done;
+			echo;echo;
+			echo  "Press s to skip, q to quit, i for interactive mode"
+			echo -n "or anything else to proceed normally: "
+			read -n 1 user_input
+
+			skip=
+			delay=$DELAY
+
+			case "$user_input" in
+			q) echo; break ;;
+			s) skip=1 ;;
+			i) delay=10000 ;;
+			esac
+
+			echo;echo;
+
+			;;
+		[1-3] )
+			if [ -z $skip ] || [ "${type:1}" = s ] ; then
+				echo;
+				echo "==== client ${type:0:1} in ===="
+				eval echo $data
+				eval echo "$data" > c${type:0:1}_in
+				read -t $delay -n 1
+			fi
+			;;
+	esac
+	
+done 3<<"testlist"
+>	start_client 1
+>	start_client 2
+>	start_client 3
+
++	Test 1: login, logout and their corner cases
+
+#	login with incorrect password on client 1. Should fail
+1	"/login $1 not_$2 $7 $8"
+
+#	login with correct password on client 1. Should succeed
+1s	"/login $1 $2 $7 $8"
+
+
+#	login on client 2 with a user that is already logged in. Should fail
+2	"/login $1 $2 $7 $8"
+
+#	login with correct password on client 2. Should succeed
+2s	"/login $3 $4 $7 $8"
+
+#	logout on client 2. Should succeed
+2	"/logout"
+
+#	login back on same user on client 2. Should succeed
+2	"/login $3 $4 $7 $8"
+
+
+#	login with correct password on client 3. Should succeed
+3s	"/login $5 $6 $7 $8"
+
+
+
++	Test 2: createsession, list and their corner cases
+
+#	list on client 1. Should list all connected clients and available sessions, in
+#	this case: user1, user2 and use3, no sessions
+1	"/list"
+
+#	list on client 3. Should list all connected clients and available sessions, in
+#	this case: user1, user2 and user3, no sessions
+3	"/list"
+
+#	logout on client 1. Should succeed
+1	"/logout"
+
+#	list on client 3. Should list all connected clients and available sessions, in
+#	this case: user2 and user3, no sessions
+3	"/list"
+
+#	logout on client 3. Should succeed
+3	"/logout"
+
+#	list on client 2. Should list all connected clients and available sessions, in
+#	this case: user2, no sessions
+2	"/list"
+
+#	login with correct password on client 1. Should succeed
+1	"/login $1 $2 $7 $8"
+
+#	list on client 1. Should list all connected clients and available sessions, in
+#	this case: user1, user2, no sessions
+1	"/list"
+
+
+#	createsession on client 1. Should create and join a session called session1
+1s	"/createsession session1"
+
+#	list on client 1. Should list all connected clients and available sessions, in
+#	this case: user1, user2, session1
+1	"/list"
+
+#	createsession on client 2. Should create and join a session called session2
+2s	"/createsession session2"
+
+#	login with correct password on client 3. Should succeed
+3	"/login $5 $6 $7 $8"
+
+#	list on client 3. Should list all connected clients and available sessions, in
+#	this case: user1, user2 and user3, session1, session2
+3	"/list"
+
+#	createsession on client 3. Should fail because session1 already exists
+3	"/createsession session1"
+
+
+
++ 	Test 3: joinsession, leavesession and their corner cases
+
+#	leavesession on client 3. Shouldn't do anything since user3 is not in any session
+3	"/leavesession"
+
+#	joinsession on client 3. Should fail since session3 does not exist.
+#	it is ok if this action explicitly defaults to createsession
+3	"/joinsession session3"
+
+#	leavesession on client 3. Just in case joinsession is creating sessions
+3	"/leavesession"
+
+
+#	leavesession on client 1. This should succeed, user1 should leave
+#	test_session and since the session is now empty it should be deleted
+1	"/leavesession"
+
+#	list on client 2. Checking if session1 was deleted correctly
+2	"/list"
+
+#	joinsession on client 3. Should fail since session1 should not exist.
+#	it is ok if this action explicitly defaults to createsession
+3	"/joinsession session1"
+
+#	leavesession on client 3. Just in case joinsession is creating sessions
+3	"/leavesession"
+
+
+#	createsession on client 1. Should create and join a session called session1
+1	"/createsession session1"
+
+#	joinsession on client 1. Should fail since user1 is already on session1
+1	"/joinsession session1"
+
+#	joinsession on client 3. Should succeed and add user3 to session1
+3s	"/joinsession session1"
+
+
+
++ 	Test 4: message exchange and its corner cases
+
+#	At this point we should have all 3 users logged in and 2 sessions created.
+#	user1 and user3 should be on session1 and user 2 should be on session2
+1	"/list"
+
+
+#	message sent from user3. Client 1 should receive the message and client 2
+#	should not receive anything. Client 3 may echo  the message
+3	"hello, my name is $5"
+
+#	message sent from user1. Client 3 should receive the message and client 2
+#	should not receive anything. Client 1 may echo the message
+1	"hello $5, my name is $1"
+1	"have you been able to successfully complete lab 4?"
+
+#	message sent from user3. Client 1 should receive the message and client 2
+#	should not receive anything. Client 1 may echo the message
+3	"I have completed it!"
+3	"Whether I was successful depends on these tests we are running now..."
+
+#	leavesession on client 3. This should succeed
+3	"/leavesession"
+
+
+#	message sent from user1. Clients 2 and 3 should not output anything
+1	"Oh no, my cursed question made $3 run away"
+
+
+
+#	message sent from user3. Since user3 is not in any session this should fail
+3	"Can anyone hear me?"
+
+#	message sent from user2. Clients 1 and 3 should not output anything
+2	"Is anyone here?"
+
+
+#	move all users to session1
+2	"/leavesession"
+2	"/joinsession session1"
+3	"/joinsession session1"
+
+#	message sent from user1. Clients 2 and 3 should receive it
+1	"Everyone is here, we are almost done!"
+
+#	message sent from user2. Clients 1 and 3 should receive it
+2	"I am only here because I heard there was free food, where is it?"
+
+#	message sent from user3. Clients 1 and 2 should receive it
+3	"The cake is a lie!"
+
+
++ 	Test 5: Will it blend? That is the question
+
+#	logout on client 2. This should work
+2	"/logout"
+
+#	list on client 1. This should work and show user1, user2 and session1
+1	"/list"
+
+#	message sent from user1. This should work
+1	"Looks like people are leaving now"
+
+
+#	quit on client 3. This should work
+3	"/quit"
+
+#	list on client 1. This should work and show user1, user2 and session1
+1	"/list"
+
+#	login with correct password on client 2. Should succeed
+2	"/login $3 $4 $7 $8"
+
+#	message sent from user1. This should work but no clients should receive this
+1	"Maybe I shouldn't have lied about the free food..."
+
+
+#	restart client 3
+>	start_client 3
+#	login with correct password on client 3. Should succeed
+3	"/login $5 $6 $7 $8"
+
+
+#	move all clients to session 1
+2	"/joinsession session1"
+3	"/joinsession session1"
+
+
+#	message sent from user2. All clients should receive this message
+2	"I brought some cake"
+
+
+#	kill client 3, this should not break the server
+>	kill_client 3
+
+#	list on client 1. This should work and show user1, user2 and session1
+1	"/list"
+
+#	message sent from user1. Client 2 should receive this
+2	"We are finally done. Time to go home"
+
+
+#	quit all clients
+1	"/quit"
+2	"/quit"
+testlist
+
+
+# cleanup before leaving
+for i in 1 2 3 ; do
+	kill_client "$i"
+	exec {fds[$i]}>&-
+	rm c${i}_in
+done
+
+

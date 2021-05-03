@@ -1,5 +1,4 @@
-huan1386 1005026044
-shi2077 1005052087
-random1 12345678
-random2 password
+a 1
+b 2
+c 3
 

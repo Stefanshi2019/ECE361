@@ -12,68 +12,15 @@
 #include <signal.h>
 #include <pthread.h>
 #include <stdbool.h>
-#define MAXDATASIZE 100
-#define BACKLOG 10
-#define MAXCLIENT 10
-#define MAXSESSION 10
 
-enum{
-	LOGIN,
-	LO_ACK,
-	LO_NAK,
-	EXIT,
-	JOIN,
-	JN_ACK,
-	JN_NAK,
-	LEAVE_SESS,
-	NEW_SESS,
-	NS_ACK,
-        NS_NAK,
-	MESSAGE,
-	QUERY,
-	QU_ACK
-}message_type;
-
-typedef struct client{
-	int sockfd;
-        int loggedin;
-        int session_id;
-	char ID[100];
-	char password[100];
-	pthread_t p;
-	struct client* next;
-}client;
+#include "common.h"
 
 int num_con = 0;
 client *active_client = NULL;
-
-// a client_list which stores all potential clients that may access the server, dynamically allocated with num_clients
 static client client_list[MAXCLIENT];
 int num_clients;
-
-pthread_mutex_t login_lock = PTHREAD_MUTEX_INITIALIZER;
-// function definitions
-    
-typedef struct message{
-	unsigned int type;
-	unsigned int size;
-	unsigned char source[MAXDATASIZE];
-	unsigned char data[MAXDATASIZE];
-}message;
-
-// =============================================================================
-// newly added stuff
+//pthread_mutex_t login_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t session_lock = PTHREAD_MUTEX_INITIALIZER;
-
-typedef struct session{
-    int session_id;
-    char session_name[100];
-// clients can be accessed directly by user id
-    struct client* clients[MAXCLIENT];
-    int num_users;
-}session;
-
-// the index to session_list is session id
 static session session_list[MAXSESSION];
 
 void initialize_session_list(){
@@ -90,40 +37,48 @@ void initialize_session_list(){
 }
 
 void print_session_info(int s_id, int c_id){
-    for(int i = 0; i < MAXCLIENT; i++){
-        if(client_list[i].loggedin == 1 && client_list[i].session_id == s_id)
-            printf("User %s is in\n", session_list[s_id].clients[i]->ID);
-    }
+    	for(int i = 0; i < MAXCLIENT; i++){
+        	if(client_list[i].loggedin == 1 && client_list[i].session_id[s_id] == 1)
+            	printf("User %s is in\n", session_list[s_id].clients[i]->ID);
+    	}
 }
 
 int create_session(char* session_name){
-    // find the smallest session with no users
-    pthread_mutex_lock(&session_lock);
-    for(int i=0; i<MAXSESSION; ++i){
-        if(session_list[i].num_users == 0){
-            strcpy(session_list[i].session_name, session_name);
-            pthread_mutex_unlock(&session_lock);
-            printf("New session create: name %s, s_id %d\n", session_name, i);
-            return i;
-        }
-    }
-    pthread_mutex_lock(&session_lock);
-    printf("All sessions used\n");
-    return -1;
+    	// find the smallest indexed session with no users
+	pthread_mutex_lock(&session_lock);
+	for(int i=0; i<MAXSESSION; ++i){
+		if(strcmp(session_name, session_list[i].session_name) == 0){
+			pthread_mutex_unlock(&session_lock);
+			printf("Create Session Failed: Session %s already exists!\n", session_name);
+			return -1;
+		}
+	}
+	for(int i=0; i<MAXSESSION; ++i){
+		if(session_list[i].num_users == 0){
+			strcpy(session_list[i].session_name, session_name);
+			pthread_mutex_unlock(&session_lock);
+			printf("Create Session Successfully: Name: %s, Session: %d\n", session_name, i);
+			return i;
+		}
+	}
+	pthread_mutex_lock(&session_lock);
+	printf("Create Session Failed: All sessions used\n");
+	return -1;
 }
 
 int find_session(char* session_name){
-    pthread_mutex_lock(&session_lock);
-    for(int i=0; i<MAXSESSION; ++i){
-        if(strcmp(session_list[i].session_name, session_name) == 0){
-            pthread_mutex_unlock(&session_lock);
-            printf("Session found: %s, s_id %s\n", session_name, i);
-            return i;
-        }
-    }
-    pthread_mutex_unlock(&session_lock);
-    printf("Session not found\n");
-    return -1;
+	pthread_mutex_lock(&session_lock);
+	for(int i=0; i<MAXSESSION; ++i){
+		if(strcmp(session_list[i].session_name, session_name) == 0 && session_list[i].num_users > 0){
+			pthread_mutex_unlock(&session_lock);
+                        // this printf line causes segmentation fault!
+			//printf("Session found: %s, s_id %s\n", session_name, i);
+			return i;
+		}
+	}
+	pthread_mutex_unlock(&session_lock);
+	printf("Session not found\n");
+	return -1;
 }
 
 int join_session(int s_id, int c_id){
@@ -132,60 +87,73 @@ int join_session(int s_id, int c_id){
     // for all functions, 1 means error is raised
     // validity of user_index is already handled
         if(s_id >= MAXSESSION || s_id < 0){
-            pthread_mutex_unlock(&session_lock);
-            printf("Join Session %d Failed: Session ID Invalid\n", s_id);
-            return 1;
+            	pthread_mutex_unlock(&session_lock);
+            	printf("Join Session Failed: Session does not exist\n");
+            	return 1;
         }
         if(session_list[s_id].num_users >= MAXCLIENT){
-            pthread_mutex_unlock(&session_lock);
-            printf("Join Session %d Failed: Session Full\n", s_id);
-            return 1;
+            	pthread_mutex_unlock(&session_lock);
+            	printf("Join Session Failed: Session Full\n");
+            	return 1;
         }
-        if(client_list[c_id].session_id != -1){
-            pthread_mutex_unlock(&session_lock);
-            printf("Join Session %d Failed: Already Joined a Session\n", s_id);
-            return 1;
-        }
-        client_list[c_id].session_id = s_id;
+        // not needed as joinning multiple session is implemented
+//        if(client_list[c_id].session_id != -1){
+//            	pthread_mutex_unlock(&session_lock);
+//            	printf("Join Session Failed: Already Joined a Session\n");
+//            	return 1;
+//        }
+        
+        client_list[c_id].session_id[s_id] = 1;
+        //client_list[c_id].session_id = s_id;
         session_list[s_id].clients[c_id] = &(client_list[c_id]);
         session_list[s_id].num_users++;
-        printf("Join Session %d Successfully: User %d\n", s_id, c_id);
-        //print_session_info(s_id, c_id);
+        printf("Join Session %s Successfully: User %s\n", session_list[s_id].session_name, client_list[c_id].ID);
+        print_session_info(s_id, c_id);
         pthread_mutex_unlock(&session_lock);
         return 0;
 }
 
 int leave_session(int c_id){
 	pthread_mutex_lock(&session_lock);
-	int s_id = client_list[c_id].session_id;
-	if(s_id == -1){
-		pthread_mutex_unlock(&session_lock);
-		perror("user not joined to any session");
-		return 1;
-	}
-	client_list[c_id].session_id = -1;
-	session_list[s_id].clients[c_id] = NULL;
-	session_list[s_id].num_users--;
-        if(session_list[s_id].num_users < 0){
+//	int s_id = client_list[c_id].session_id;
+//	printf("s_id: %d\n", s_id);
+        bool in_any_session = false;
+        printf("leaving session:");
+        for(int s_id=0; s_id<MAXSESSION; ++s_id){
+            if(client_list[c_id].session_id[s_id] == 1){
+                client_list[c_id].session_id[s_id] = 0;
+                in_any_session = true;
+                
+                session_list[s_id].clients[c_id] = NULL;
+                session_list[s_id].num_users--;
+                if(session_list[s_id].num_users == 0)
+                        memset(session_list[s_id].session_name, '\0', 100);
+                printf("s_id: %d ", s_id);
+                printf("Leave Session %s Successfully: User %s\n", session_list[s_id].session_name, client_list[c_id].ID);
+                printf("Users left in the session are:\n");
+                print_session_info(s_id, c_id);
+            }
+        }
+        printf("\n");
+        
+        if(in_any_session == false){
             pthread_mutex_unlock(&session_lock);
-            perror("theres a goddamn problem dawwwg");
+            printf("Leave Session Failed: User does not belong to targeted session\n");
             return 1;
         }
-        if(session_list[s_id].num_users == 0)
-            memset(session_list[s_id].session_name, '\0', 100);
-	printf("user %d left session %d\n", c_id, s_id);
+
+
+
 	pthread_mutex_unlock(&session_lock);
 	return 0;
-    
 }
-// ====================================================================================================
 
 //initialize client_list
 void initialize_client_list(){
     // read file 
 	FILE *fp = fopen("userdetail.txt", "r");
 	if(fp == NULL)
-	    perror("fp");
+	    	perror("fp");
 	//printf("1\n");
 	int login = 0;
 	int r = 0;
@@ -198,67 +166,44 @@ void initialize_client_list(){
 		r = fscanf(fp, "%s %s\n", client_list[client_count].ID, client_list[client_count].password);
 
 		int ID_len = strlen(client_list[client_count].ID) / sizeof(char);
-		printf("id len is %d\n", ID_len);
+		//printf("id len is %d\n", ID_len);
 			
 		//client_list[client_count].ID
-		    printf("%s... \n", password[client_count]);
-		   // printf("%s %s\n", ID[client_count], password[client_count]);
-		    client_count++;
+		//printf("%s... \n", password[client_count]);
+		//printf("%s %s\n", ID[client_count], password[client_count]);
+		client_count++;
 	    
 	}
 
 	num_clients = client_count - 1;
 	//    client_list = malloc(num_clients * sizeof(struct client));
 	for(int i=0; i<num_clients; ++i){
-	//        client_list[i].ID = ID[i];
-	//        client_list[i].password = password[i];
+
 		client_list[i].loggedin = 0;
 		client_list[i].sockfd = -1;
-		client_list[i].session_id = -1;
+		//client_list[i].session_id = -1;
+                for(int j=0; j<MAXSESSION; ++j)
+                    client_list[i].session_id[j] = 0;
 		client_list[i].p = -1;
 		client_list[i].next = NULL;
 	}
-	for(int i=0; i<num_clients; ++i){
+	/*for(int i=0; i<num_clients; ++i){
 		printf("ID %s, pass %s, loggedin %d\n", client_list[i].ID, client_list[i].password, client_list[i].loggedin);
-	}
+	}*/
 
 }
 
 void* handle_request(void* arg);
 void client_login(client* c, message m, int* s);
-void client_exit(client* c, message m, int* s);
+void client_logout(client* c, message m, int* s);
 void client_join(client* c, message m);
-void client_leave_sess(client* c, message m);
+void client_leave_sess(message m);
 void client_new_sess(client* c, message m);
+void client_query(client* c);
+void client_quit(client* c, message m, int* s);
+void client_message(client* c, message m);
+void client_dm(client* c, message m);
 bool check_login(struct message* m);
-
-message new_message(unsigned int type, unsigned int size, unsigned char* source, unsigned char* data){
-	message res;
-	res.type = type;
-	res.size = size;
-	strcpy(res.source, source);
-	strcpy(res.data, data);
-	return res;
-}
-
-void form_message(message p, char* sp, int * len){
-	memset(sp, 0, 2000);
-	int header = sprintf(sp, "%d:%d:%s:%s:", p.type, p.size, p.source, p.data);
-	*len = header;
-}
-
-message break_message(char* sp){
-	message res;
-	res.type = atoi(strtok(sp, ":"));
-	res.size = atoi(strtok(NULL, ":"));
-	strcpy(res.source, strtok(NULL, ":"));
-
-	if(res.size > 0)
-		strcpy(res.data, strtok(NULL, ":"));
-	else
-		strcpy(res.data, "");
-	return res;
-}
 
 void sigchld_handler(int s){
 	int saved_errno = errno;
@@ -272,13 +217,10 @@ void *get_in_addr(struct sockaddr *sa){
 	return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-
-
-
 int main(int argc, char const *argv[]){
 	initialize_client_list();
 	initialize_session_list();
-        for(int i=0; i<num_clients; ++i){
+        /*for(int i=0; i<num_clients; ++i){
                 printf("ID %s, pass %s, loggedin %d\n", client_list[i].ID, client_list[i].password, client_list[i].loggedin);
         }
         
@@ -289,8 +231,7 @@ int main(int argc, char const *argv[]){
         
         for(int i=0; i<num_clients; ++i){
                 printf("ID %s, pass %s, loggedin %d\n", client_list[i].ID, client_list[i].password, client_list[i].loggedin);
-        }
-        
+        }*/
         
 	int sockfd, new_sockfd;
 	struct addrinfo hints, *servinfo, *p;
@@ -351,8 +292,8 @@ int main(int argc, char const *argv[]){
 		exit(1);
 	}
 
-	printf("server: got connection from %s\n", s);
-
+	//printf("server: got connection from %s\n", s);
+	printf("Server Has Started! Waiting for Requests\n");
 	while(1){
 		client* c = (client*) malloc(sizeof(client));
 		sin_size = sizeof(their_addr);
@@ -406,7 +347,7 @@ void* handle_request(void* arg){
 			return NULL;
 		}
 		//printf("%d\n", numbytes);
-		buf[numbytes] = '\0';
+		buf[numbytes] = '\0'; 
 		if(numbytes == 0) //EXIT
 			break;
 		//printf("server received buf: %s\n", buf);
@@ -421,16 +362,28 @@ void* handle_request(void* arg){
 			//printf("active: %d\n", active);
 		}
 		else if (m.type == EXIT){
-			client_exit(c, m, &active);
+			client_logout(c, m, &active);
 			if(active == 0)
 				break;
 		}
 		else if(m.type == JOIN)
 			client_join(c, m);
 		else if (m.type == LEAVE_SESS)
-			client_leave_sess(c, m);
+			client_leave_sess(m);
 		else if(m.type == NEW_SESS)
 			client_new_sess(c, m);
+		else if(m.type == QUERY)
+			client_query(c);
+		else if(m.type == QUIT){
+			client_quit(c, m, &active);
+			if(active == 0)
+				break;
+		}
+		else if(m.type == MESSAGE)
+			client_message(c, m);
+		else if(m.type == DM)
+			client_dm(c, m);
+			
 	}
 	close(c->sockfd);
 	return NULL;
@@ -489,6 +442,7 @@ void client_login(client* c, message m, int* s){
 
         if(m.type == LOGIN){
 		printf("Login Successfully!\n");
+		client_list[i].sockfd = c->sockfd;
 		client_list[i].loggedin = 1;
 		*s = 1;
 		client_login_successful(c, m);
@@ -496,8 +450,17 @@ void client_login(client* c, message m, int* s){
         }
 }
 
-void client_exit(client* c, message m, int* s){
+void client_logout(client* c, message m, int* s){
 	int i = find_client_index(&m);
+//	if(client_list[i].session_id != -1){
+//		int temp = leave_session(i);
+//	}
+        int temp = leave_session(i);
+//        for(int session=0; session<MAXSESSION; ++session){
+//            if(client_list[i].session_id[session] == 1){
+//                int temp = leave_session(i);
+//            }
+//        }
 	if(client_list[i].loggedin == 1){
 		client_list[i].loggedin = 0;
 		*s = 0;
@@ -509,17 +472,34 @@ void client_exit(client* c, message m, int* s){
 	return;
 }
 
+/*int leave_session(int c_id){
+	pthread_mutex_lock(&session_lock);
+	int s_id = client_list[c_id].session_id;
+	//printf("s_id: %d\n", s_id);
+	if(s_id == -1){
+		pthread_mutex_unlock(&session_lock);
+		printf("Leave Session Failed: User does not belong to any session\n");
+		return 1;
+	}
+	client_list[c_id].session_id = -1;
+	session_list[s_id].clients[c_id] = NULL;
+	session_list[s_id].num_users--;
+	if(session_list[s_id].num_users == 0)
+		memset(session_list[s_id].session_name, '\0', 100);
+	printf("Leave Session %s Successfully: User %s\n", session_list[s_id].session_name, client_list[c_id].ID);
+	printf("Users left in the session are:\n");
+	print_session_info(s_id, c_id);
+	pthread_mutex_unlock(&session_lock);
+	return 0;
+}*/
+
 void client_join(client* c, message m){
 	int c_id = find_client_index(&m);
 	int s_id = find_session(m.data);
 	int err = join_session(s_id, c_id);
-    	printf("err: %d\n", err);
+    	//printf("err: %d\n", err);
     	// if log in success
 	if(!err){
-		//int length = snprintf( NULL, 0, "%d", s_id );
-		//char str[5];
-		//snprintf(str, 2, "%d", s_id);
-		
 		message m_ack = new_message(JN_ACK, 5, "server", m.data);
 		char sp[2000];
 		int len = 0;
@@ -532,9 +512,6 @@ void client_join(client* c, message m){
     	}
 	// if log in failed
     	else{
-		//char str[5];
-		//snprintf(str, 2, "%d", s_id);
-
 		message m_ack = new_message(JN_NAK, 5, "server", m.data);
 		char sp[2000];
 		int len = 0;
@@ -545,65 +522,301 @@ void client_join(client* c, message m){
         	}
         
     	}
-	printf("client_join performed\n");
+	//printf("client_join performed\n");
 	return;
 }
 
-void client_leave_sess(client* c, message m){
-    (void)c;
-        int c_id = find_client_index(&m);
-        int err = leave_session(c_id);
-        
-        if(!err){
-            
-            printf("leave session sucess\n");
-        }
-        else{
-            printf("leave session failed\n");
-        }
-         printf("client_leave performed\n");
-         return;
-	
+void client_leave_sess(message m){
+	int c_id = find_client_index(&m);
+	int err = leave_session(c_id);
+	return;
 }
 
 void client_new_sess(client* c, message m){
     
-    int c_id = find_client_index(&m);
-    int s_id = create_session(m.data);
-    printf("newly created session id is %d\n", s_id);
-    if(s_id == -1)
-        return;
+	int c_id = find_client_index(&m);
+	int s_id = create_session(m.data);
+	//printf("Newly created session id is %d\n", s_id);
+	if(s_id == -1){
+		message m_ack = new_message(NS_NAK, 0, "server", "");
+            	char sp[2000];
+            	int len = 0;
+            	form_message(m_ack, sp, &len);
+            	if(send(c->sockfd, sp, len, 0) == -1){
+                   	 perror("send new_sess_nak");
+                    	return;
+            	}
+		return;
+	}
     
-    int err = join_session(s_id, c_id);
-    printf("joined session %d\n", err);
+	int err = join_session(s_id, c_id);
+	//printf("joined session %d\n", err);
    
-    if(!err){
-        message m_ack = new_message(NS_ACK, 5, "server", m.data);
-        char sp[2000];
-        int len = 0;
-        form_message(m_ack, sp, &len);
-        if(send(c->sockfd, sp, len, 0) == -1){
-                perror("send login_ack");
-                return;
+	if(!err){
+		message m_ack = new_message(NS_ACK, 0, "server", "");
+		char sp[2000];
+		int len = 0;
+		form_message(m_ack, sp, &len);
+		if(send(c->sockfd, sp, len, 0) == -1){
+			perror("send new_sess_ack");
+			return;
+		}
+
+	}
+
+    	else{
+
+            	message m_ack = new_message(NS_NAK, 0, "server", "");
+            	char sp[2000];
+            	int len = 0;
+            	form_message(m_ack, sp, &len);
+            	if(send(c->sockfd, sp, len, 0) == -1){
+                   	 perror("send new_sess_nak");
+                    	return;
+            	}
+    	}
+    //printf("client_create performed\n");
+    return;
+}
+
+void client_query(client* c){
+	char l[1000];
+	int count = 0;
+	int header;
+	for(int i = 0; i < MAXCLIENT; i++){
+		if(client_list[i].loggedin == 1){
+			char p[100];
+                        int none = 0;
+                        for(int s_id = 0; s_id < MAXSESSION; ++s_id){
+                            if(client_list[i].session_id[s_id] == 1){
+				none = 1;
+                                strcpy(p, session_list[s_id].session_name);
+                                printf("User %s is in Session %s\n", client_list[i].ID, p);
+                                if(count == 0){
+                                        //printf("got in here\n");
+                                        strcpy(l, client_list[i].ID);
+                                        strcat(l, ",");
+                                        strcat(l, p);
+                                        strcat(l, ",");
+                                        //printf("%s\n", l);
+                                }
+                                else{
+                                        //printf("but here\n");
+                                        strcat(l, client_list[i].ID);
+                                        strcat(l, ",");
+                                        strcat(l, p);
+                                        strcat(l, ",");
+                                        //printf("%s\n", l);
+                                }
+                                count++;
+                            }
+                        }
+			if(none == 0){
+				strcpy(p, "None");
+				if(count == 0){
+                                        //printf("got in here\n");
+                                        strcpy(l, client_list[i].ID);
+                                        strcat(l, ",");
+                                        strcat(l, p);
+                                        strcat(l, ",");
+                                        //printf("%s\n", l);
+                                }
+                                else{
+                                        //printf("but here\n");
+                                        strcat(l, client_list[i].ID);
+                                        strcat(l, ",");
+                                        strcat(l, p);
+                                        strcat(l, ",");
+                                        //printf("%s\n", l);
+                                }
+                                count++;
+			}
+//			if(client_list[i].session_id == -1)
+//				strcpy(p, "None");
+//			else
+//				strcpy(p, session_list[client_list[i].session_id].session_name);
+//
+//			printf("User %s is in Session %s\n", client_list[i].ID, p);
+//			if(count == 0){
+//				//printf("got in here\n");
+//				strcpy(l, client_list[i].ID);
+//				strcat(l, ",");
+//				strcat(l, p);
+//				strcat(l, ",");
+//				//printf("%s\n", l);
+//			}
+//			else{
+//				//printf("but here\n");
+//				strcat(l, client_list[i].ID);
+//				strcat(l, ",");
+//				strcat(l, p);
+//				strcat(l, ",");
+//				//printf("%s\n", l);
+//			}
+//			count++;
+		}
+	}
+	message m_ack = new_message(QU_ACK, strlen(l), "server", l);
+	char sp[2000];
+	int len = 0;
+	form_message(m_ack, sp, &len);
+	printf("qu_ack: %s\n", sp);
+	if(send(c->sockfd, sp, len, 0) == -1){
+		perror("send qu_ack");
+		return;
+	}
+	printf("Query List Sent\n");
+	return;
+}
+
+void client_quit(client* c, message m, int* s){
+	int i = find_client_index(&m);
+	if(client_list[i].loggedin == 1){
+		client_list[i].loggedin = 0;
+//		int s_id = client_list[i].session_id;
+//		client_list[i].session_id = -1;
+//		session_list[s_id].clients[i] = NULL;
+//		session_list[s_id].num_users--;
+                int temp = leave_session(i);
+                        
+		*s = 0;
+		message m_ack = new_message(QUIT_ACK, 0, "server", "");
+		char sp[2000];
+		int len = 0;
+		form_message(m_ack, sp, &len);
+		if(send(c->sockfd, sp, len, 0) == -1){
+			perror("send quit_ack");
+			return;
+		}
+		printf("Quit Successfully!\n");
+		close(c->sockfd);
+		return;
+	}
+	return;
+}
+
+void client_message(client* c, message m){
+    // find the client who is sending the message
+	int c_id = find_client_index(&m);
+	//int s_id = client_list[c_id].session_id;
+        
+//        char* temp = strtok(m.data, ",");
+//        while(temp != NULL){
+//                printf("User: %s, Session: %s\n", temp, strtok(NULL, ","));
+//                temp = strtok(NULL, ",");
+//        }
+        int s_id;
+        char* session_name = strtok(m.data, " ");
+        
+        
+        if(session_name == NULL){
+            printf("invalid session name\n");
+            return;
+        }
+        
+        s_id = find_session(session_name);
+        if(s_id == -1)
+            return;
+            
+        char* mess = strtok(NULL, " ");
+        if(mess == NULL){
+            printf("please enter message\n");
+            return;
         }
 
-    }
+            
+        if(client_list[c_id].session_id[s_id] == 0){
+            printf("client not joined in target session\n");
+            return;
+        }
+        
+        else{
+            char l[1000];
+            strcpy(l, m.source);
+            strcat(l, " {");
+            strcat(l, mess);
+            strcat(l, "}");
 
-    else{
+            message m_ack = new_message(MESSAGE, strlen(l), "server", l);
 
-            message m_ack = new_message(NS_NAK, 5, "server", m.data);
             char sp[2000];
             int len = 0;
             form_message(m_ack, sp, &len);
-            if(send(c->sockfd, sp, len, 0) == -1){
-                    perror("send login_nak");
-                    return;
-            }
+            //printf("Server Broadcast: %s\n", sp);
+            for(int i=0; i<MAXCLIENT; ++i){
+            // dont send to itself
+                    if(session_list[s_id].clients[i] != NULL && i != c_id){
 
-    }
-    printf("client_create performed\n");
-    return;
-        
+                            //printf("Server Broadcast: %s\n", sp);
+                            if(send(session_list[s_id].clients[i]->sockfd, sp, len, 0) == -1){
+                                    perror("send message");
+                                    return;
+                            }
+                            //printf("Broadcasted message\n");
+                    }
+            }
+        }
+	return;
+}
+
+int find_client_index_by_name(char* name){
+	//char* src = m->source;
+	//printf("src name is %s\n", m->source);
+	for(int i=0; i<num_clients; ++i){
+		//printf("each potential client name is %s, src name is %s\n", client_list[i].ID, src);
+		if(strcmp(client_list[i].ID, name) == 0){
+			return i;
+		}
+	}
+	return -1;
+}
+
+void client_dm(client* c, message m){
+	char name[100];
+	char mess[500];
+	//printf("m.data before strtok: %s\n", m.data);
+	strcpy(name, strtok(m.data, " "));
+	int c_id = find_client_index_by_name(name);
+	if(c_id == -1 || client_list[c_id].loggedin == 0){
+		printf("Client does not exist or is not logged in\n");
+		return;
+	}
+	char* temp = strtok(NULL, "\n");
+	if(temp == NULL){
+		printf("Cannot be sent: Message Empty\n");
+		return;
+	}
+	strcpy(mess, temp);
+	//printf("mess: %s\n", mess);
+	/*int c_id = find_client_index_by_name(name);
+	if(c_id == -1 || client_list[c_id].loggedin == 0){
+		printf("Client does not exist or is not logged in\n");
+		return;
+	}*/
+		
+	//printf("Name: %s, ID: %d\n", name, c_id);
+	//printf("m.data after: %s\n", m.data);
+
+	char l[1000];
+	strcpy(l, "dm ");
+	strcat(l, m.source);
+	strcat(l, " {");
+	strcat(l, mess);
+	strcat(l, "}");
+
+	//printf("l: %s\n", mess);
+	message m_ack = new_message(DM, strlen(l), "server", l);
+	//printf("data: %s\n", m_ack.data);
+	char sp[2000];
+	int len = 0;
+	form_message(m_ack, sp, &len);
+	//printf("Server Broadcast: %s\n", sp);
+	int b = 0; 
+	if(send(client_list[c_id].sockfd, sp, len, 0) == -1){
+		perror("send dm");
+		return;
+	}
+	return;
 }
 
 
